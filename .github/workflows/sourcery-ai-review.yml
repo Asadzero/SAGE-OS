@@ -1,0 +1,233 @@
+name: 🤖 Sourcery AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '**/*.c'
+      - '**/*.h'
+      - '**/*.cpp'
+      - '**/*.hpp'
+      - '**/*.py'
+      - '**/*.rs'
+      - '**/*.S'
+      - '**/*.s'
+      - '**/*.asm'
+  push:
+    branches: [dev, main]
+    paths:
+      - '**/*.c'
+      - '**/*.h'
+      - '**/*.cpp'
+      - '**/*.hpp'
+      - '**/*.py'
+      - '**/*.rs'
+      - '**/*.S'
+      - '**/*.s'
+      - '**/*.asm'
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+  statuses: write
+
+jobs:
+  sourcery-review:
+    name: 🔍 Sourcery AI Code Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: 📦 Install Sourcery
+      run: |
+        pip install --upgrade pip
+        pip install sourcery-cli
+        
+    - name: 🔧 Configure Sourcery
+      run: |
+        # Create sourcery config if not exists
+        if [ ! -f .sourcery.yaml ]; then
+          echo "Creating default Sourcery configuration..."
+          cat > .sourcery.yaml << 'EOF'
+        project_name: "SAGE-OS"
+        rules:
+          default: true
+          embedded_systems: true
+          security: true
+          performance: true
+        include:
+          - "**/*.c"
+          - "**/*.h"
+          - "**/*.py"
+          - "**/*.rs"
+        exclude:
+          - "build/**"
+          - "output/**"
+          - "*.img"
+          - "*.elf"
+        EOF
+        fi
+        
+    - name: 🤖 Run Sourcery Analysis
+      env:
+        SOURCERY_TOKEN: ${{ secrets.SOURCERY_TOKEN }}
+      run: |
+        echo "🔍 Running Sourcery AI analysis..."
+        
+        # Run sourcery review
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          echo "📋 Analyzing pull request changes..."
+          sourcery review --diff="origin/${{ github.base_ref }}..HEAD" \
+                          --output-format=github-actions \
+                          --fail-on-critical=true \
+                          --verbose
+        else
+          echo "📋 Analyzing recent changes..."
+          sourcery review --diff="HEAD~1..HEAD" \
+                          --output-format=github-actions \
+                          --fail-on-critical=false \
+                          --verbose
+        fi
+        
+    - name: 📊 Generate Code Quality Report
+      if: always()
+      run: |
+        echo "📊 Generating code quality metrics..."
+        
+        # Create reports directory
+        mkdir -p reports/sourcery
+        
+        # Generate quality report
+        sourcery review --output-format=json \
+                        --output-file=reports/sourcery/quality-report.json \
+                        . || true
+                        
+        # Generate summary
+        cat > reports/sourcery/summary.md << 'EOF'
+        # 🤖 Sourcery AI Code Quality Report
+        
+        **Generated:** $(date)
+        **Workflow:** ${{ github.workflow }}
+        **Run ID:** ${{ github.run_id }}
+        
+        ## 📊 Analysis Summary
+        
+        This report contains automated code quality analysis from Sourcery AI.
+        
+        ### 🎯 Focus Areas
+        - **Embedded Systems**: Memory management, stack usage, interrupt safety
+        - **Security**: Buffer overflows, input validation, privilege checks
+        - **Performance**: Loop optimization, memory access patterns
+        - **Code Style**: Consistency, readability, maintainability
+        
+        ### 🔍 File Coverage
+        - C/C++ kernel and driver code
+        - Python build scripts and tools
+        - Rust prototype code
+        - Assembly boot code
+        
+        EOF
+        
+    - name: 📤 Upload Analysis Results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: sourcery-analysis-results
+        path: |
+          reports/sourcery/
+        retention-days: 30
+        
+    - name: 💬 Comment on PR
+      if: github.event_name == 'pull_request' && always()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          
+          // Check if summary exists
+          const summaryPath = 'reports/sourcery/summary.md';
+          if (fs.existsSync(summaryPath)) {
+            const summary = fs.readFileSync(summaryPath, 'utf8');
+            
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🤖 Sourcery AI Code Review\n\n${summary}\n\n---\n*Automated analysis by Sourcery AI*`
+            });
+          }
+          
+    - name: 📈 Update Status Check
+      if: always()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const state = '${{ job.status }}' === 'success' ? 'success' : 'failure';
+          const description = state === 'success' 
+            ? '✅ Code quality analysis passed' 
+            : '❌ Code quality issues found';
+            
+          await github.rest.repos.createCommitStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            sha: context.sha,
+            state: state,
+            target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            description: description,
+            context: 'sourcery-ai/code-quality'
+          });
+
+  security-analysis:
+    name: 🔒 Security-Focused Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: sourcery-review
+    if: always()
+    
+    steps:
+    - name: 📥 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 🔍 Security Pattern Analysis
+      run: |
+        echo "🔒 Running security-focused analysis..."
+        
+        # Create security reports directory
+        mkdir -p reports/security-patterns
+        
+        # Check for common security patterns in C code
+        echo "## 🛡️ Security Pattern Analysis" > reports/security-patterns/analysis.md
+        echo "" >> reports/security-patterns/analysis.md
+        
+        # Buffer overflow patterns
+        echo "### Buffer Overflow Checks" >> reports/security-patterns/analysis.md
+        grep -rn "strcpy\|strcat\|sprintf\|gets" --include="*.c" --include="*.h" . || echo "✅ No unsafe string functions found" >> reports/security-patterns/analysis.md
+        
+        # Integer overflow patterns
+        echo "" >> reports/security-patterns/analysis.md
+        echo "### Integer Overflow Checks" >> reports/security-patterns/analysis.md
+        grep -rn "malloc.*\*\|calloc.*\*" --include="*.c" --include="*.h" . || echo "✅ No obvious integer overflow patterns" >> reports/security-patterns/analysis.md
+        
+        # Format string vulnerabilities
+        echo "" >> reports/security-patterns/analysis.md
+        echo "### Format String Checks" >> reports/security-patterns/analysis.md
+        grep -rn "printf.*%.*," --include="*.c" --include="*.h" . || echo "✅ No format string vulnerabilities found" >> reports/security-patterns/analysis.md
+        
+    - name: 📤 Upload Security Analysis
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-pattern-analysis
+        path: reports/security-patterns/
+        retention-days: 30
